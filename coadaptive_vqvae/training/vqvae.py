@@ -7,7 +7,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from coadaptive_vqvae.config.defaults import VQVAEConfig, get_vqvae_config
 from coadaptive_vqvae.data.datasets import SpikeDataset1
-from coadaptive_vqvae.training.common import print_experiment_banner, resolve_device
+from coadaptive_vqvae.training.common import print_component_mapping, print_experiment_banner, resolve_device
 from coadaptive_vqvae.models.vqvae import ModelNoVQ
 from coadaptive_vqvae.utils.metrics import AverageMeter
 
@@ -16,6 +16,7 @@ def train(config: VQVAEConfig, device: torch.device | None = None) -> None:
     os.environ["CUDA_LAUNCH_BLOCKING"] = config.training.cuda_launch_blocking
     device = device or resolve_device()
     print_experiment_banner("vqvae", config)
+    print_component_mapping("vqvae", ["Spike Pattern Attention Module (SPAM)", "Latent Space Projection", "Vector Quantizer"])
     writer = SummaryWriter(config.training.log_dir)
     model_dir = config.training.model_dir
     os.makedirs(model_dir, exist_ok=True)

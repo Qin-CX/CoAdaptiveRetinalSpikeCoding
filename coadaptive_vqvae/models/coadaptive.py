@@ -1,52 +1,20 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision.models import resnext50_32x4d
 
+from .paper_modules import SpectralFeatureExtractor
+from .paper_modules import SpikeFusionUnit
+from .paper_modules import TopologicalFeatureExtractor
 
-class FrequencyFeatureExtractor(nn.Module):
-    def __init__(self, out_channels: int = 256, out_size=(2, 2)) -> None:
-        super().__init__()
-        self.feature_net = nn.Sequential(
-            nn.Conv2d(2, 64, kernel_size=3, stride=2, padding=1),
-            nn.GroupNorm(16, 64),
-            nn.ReLU(True),
-            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
-            nn.GroupNorm(32, 128),
-            nn.ReLU(True),
-            nn.Conv2d(128, out_channels, kernel_size=3, stride=2, padding=1),
-            nn.GroupNorm(32, out_channels),
-            nn.ReLU(True),
-            nn.AdaptiveAvgPool2d(out_size),
-        )
-
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        fft_result = torch.fft.fft2(inputs, norm="ortho")
-        shifted_result = torch.fft.fftshift(fft_result, dim=(-2, -1))
-        frequency_tensor = torch.cat([torch.real(shifted_result), torch.imag(shifted_result)], dim=1)
-        return self.feature_net(frequency_tensor)
+FrequencyFeatureExtractor = SpectralFeatureExtractor
 
 
 class CoAdaptiveEncoder(nn.Module):
     def __init__(self, out_shape=(1, 150, 60)) -> None:
         super().__init__()
-        spatial_backbone = resnext50_32x4d(weights=None)
-        original_conv = spatial_backbone.conv1
-        spatial_backbone.conv1 = nn.Conv2d(
-            1,
-            original_conv.out_channels,
-            kernel_size=original_conv.kernel_size,
-            stride=original_conv.stride,
-            padding=original_conv.padding,
-            bias=False,
-        )
-        self.spatial_branch = nn.Sequential(*list(spatial_backbone.children())[:-3])
-        self.frequency_branch = FrequencyFeatureExtractor(out_channels=256, out_size=(2, 2))
-        self.fusion_layer = nn.Sequential(
-            nn.Conv2d(1280, 1024, kernel_size=1, stride=1, padding=0, bias=False),
-            nn.GroupNorm(32, 1024),
-            nn.ReLU(True),
-        )
+        self.topological_feature_extractor = TopologicalFeatureExtractor(out_channels=1024)
+        self.spectral_feature_extractor = SpectralFeatureExtractor(out_channels=256, out_size=(2, 2))
+        self.spike_fusion_unit = SpikeFusionUnit(topological_channels=1024, spectral_channels=256, fused_channels=1024)
         self.decoder_head = nn.Sequential(
             nn.ConvTranspose2d(1024, 512, kernel_size=4, stride=2, padding=1),
             nn.GroupNorm(32, 512),
@@ -68,9 +36,9 @@ class CoAdaptiveEncoder(nn.Module):
         )
 
     def forward(self, image: torch.Tensor, gumbel_tau: float = 1.0) -> torch.Tensor:
-        spatial_features = self.spatial_branch(image)
-        frequency_features = self.frequency_branch(image)
-        fused_features = self.fusion_layer(torch.cat([spatial_features, frequency_features], dim=1))
+        topological_features = self.topological_feature_extractor(image)
+        spectral_features = self.spectral_feature_extractor(image)
+        fused_features = self.spike_fusion_unit(topological_features, spectral_features)
         spike_logits = self.decoder_head(fused_features)
         spike_distribution = F.gumbel_softmax(spike_logits, tau=gumbel_tau, hard=True, dim=1)
         return spike_distribution[:, 1:2, :, :]

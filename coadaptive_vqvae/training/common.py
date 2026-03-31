@@ -13,3 +13,9 @@ def resolve_device(explicit_device: str | None = None) -> torch.device:
 def print_experiment_banner(name: str, config) -> None:
     print(f"Experiment: {name}")
     print(json.dumps(asdict(config), indent=2, ensure_ascii=False))
+
+
+def print_component_mapping(name: str, components: list[str]) -> None:
+    print(f"Components for {name}:")
+    for component in components:
+        print(f"- {component}")

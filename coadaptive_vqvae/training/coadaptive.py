@@ -12,13 +12,22 @@ from coadaptive_vqvae.config.defaults import CoAdaptiveConfig, get_coadaptive_co
 from coadaptive_vqvae.data.datasets import SpikeDataset1
 from coadaptive_vqvae.models.coadaptive import CoAdaptiveEncoder, CoAdaptiveFramework
 from coadaptive_vqvae.models.vqvae import Model
-from coadaptive_vqvae.training.common import print_experiment_banner, resolve_device
+from coadaptive_vqvae.training.common import print_component_mapping, print_experiment_banner, resolve_device
 from coadaptive_vqvae.utils.metrics import AverageMeter
 
 
 def train(config: CoAdaptiveConfig, device: torch.device | None = None) -> None:
     device = device or resolve_device()
     print_experiment_banner("coadaptive_encoder", config)
+    print_component_mapping(
+        "coadaptive_encoder",
+        [
+            "Topological Feature Extractor",
+            "Spectral Feature Extractor",
+            "Spike Fusion Unit",
+            "Gumbel-Softmax Spike Generator",
+        ],
+    )
     pretrained_vqvae_path = config.training.pretrained_vqvae_path
     encoder_model_dir = config.training.encoder_model_dir
     os.makedirs(encoder_model_dir, exist_ok=True)

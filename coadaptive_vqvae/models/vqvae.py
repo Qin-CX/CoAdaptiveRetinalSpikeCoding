@@ -2,64 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-class ProjectionHead(nn.Module):
-    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int) -> None:
-        super().__init__()
-        self.layers = nn.Sequential(
-            nn.Conv2d(input_dim, hidden_dim, kernel_size=1),
-            nn.GroupNorm(32, hidden_dim),
-            nn.GELU(),
-            nn.Conv2d(hidden_dim, output_dim, kernel_size=1),
-        )
-
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        return self.layers(inputs)
-
-
-class ChannelAttention(nn.Module):
-    def __init__(self, channels: int, reduction_ratio: int = 16) -> None:
-        super().__init__()
-        reduced_channels = max(1, channels // reduction_ratio)
-        self.max_pool = nn.AdaptiveMaxPool2d(1)
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.mlp = nn.Sequential(
-            nn.Linear(channels, reduced_channels, bias=False),
-            nn.ReLU(),
-            nn.Linear(reduced_channels, channels, bias=False),
-        )
-        self.activation = nn.Sigmoid()
-
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        batch_size, channels, _, _ = inputs.shape
-        max_features = self.max_pool(inputs).view(batch_size, channels)
-        avg_features = self.avg_pool(inputs).view(batch_size, channels)
-        weights = self.activation(self.mlp(max_features) + self.mlp(avg_features)).view(batch_size, channels, 1, 1)
-        return inputs * weights
-
-
-class SpatialAttention(nn.Module):
-    def __init__(self, kernel_size: int = 7) -> None:
-        super().__init__()
-        padding = (kernel_size - 1) // 2
-        self.conv = nn.Conv2d(2, 1, kernel_size=kernel_size, padding=padding, bias=False)
-        self.activation = nn.Sigmoid()
-
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        avg_features = torch.mean(inputs, dim=1, keepdim=True)
-        max_features, _ = torch.max(inputs, dim=1, keepdim=True)
-        return self.activation(self.conv(torch.cat([avg_features, max_features], dim=1)))
-
-
-class CBAM(nn.Module):
-    def __init__(self, channels: int, reduction_ratio: int = 16, kernel_size: int = 7) -> None:
-        super().__init__()
-        self.channel_attention = ChannelAttention(channels, reduction_ratio)
-        self.spatial_attention = SpatialAttention(kernel_size)
-
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        channel_refined = self.channel_attention(inputs)
-        return channel_refined * self.spatial_attention(channel_refined)
+from .paper_modules import ChannelAttention
+from .paper_modules import LatentSpaceProjection
+from .paper_modules import SPAM
+from .paper_modules import SpatialAttention
 
 
 class FeedForwardSpikeEncoder(nn.Module):
@@ -262,8 +208,8 @@ class VQVAEModel(nn.Module):
         super().__init__()
         self.encoder = FeedForwardSpikeEncoder(in_channels=in_channels, input_shape=in_scale, out_channels=num_hiddens)
         self.residual_stack = ResidualStack(num_hiddens, num_hiddens, num_residual_layers, num_residual_hiddens)
-        self.attention = CBAM(num_hiddens)
-        self.projection_head = ProjectionHead(num_hiddens, num_hiddens, embedding_dim)
+        self.spike_pattern_attention = SPAM(num_hiddens)
+        self.latent_space_projection = LatentSpaceProjection(num_hiddens, num_hiddens, embedding_dim)
         self.quantizer = (
             VectorQuantizerEMA(num_embeddings, embedding_dim, commitment_cost, decay)
             if decay > 0.0
@@ -274,8 +220,8 @@ class VQVAEModel(nn.Module):
     def forward(self, inputs: torch.Tensor):
         latent = self.encoder(inputs)
         latent = self.residual_stack(latent)
-        latent = self.attention(latent)
-        latent = self.projection_head(latent)
+        latent = self.spike_pattern_attention(latent)
+        latent = self.latent_space_projection(latent)
         loss, quantized, perplexity, _ = self.quantizer(latent)
         reconstruction = self.decoder(quantized)
         return loss, reconstruction, perplexity
@@ -297,15 +243,15 @@ class ModelNoVQ(nn.Module):
         super().__init__()
         self.encoder = FeedForwardSpikeEncoder(in_channels=in_channels, input_shape=in_scale, out_channels=num_hiddens)
         self.residual_stack = ResidualStack(num_hiddens, num_hiddens, num_residual_layers, num_residual_hiddens)
-        self.attention = CBAM(num_hiddens)
-        self.projection_head = ProjectionHead(num_hiddens, num_hiddens, embedding_dim)
+        self.spike_pattern_attention = SPAM(num_hiddens)
+        self.latent_space_projection = LatentSpaceProjection(num_hiddens, num_hiddens, embedding_dim)
         self.decoder = ConvDecoder(embedding_dim, num_hiddens, num_residual_layers, num_residual_hiddens)
 
     def forward(self, inputs: torch.Tensor):
         latent = self.encoder(inputs)
         latent = self.residual_stack(latent)
-        latent = self.attention(latent)
-        latent = self.projection_head(latent)
+        latent = self.spike_pattern_attention(latent)
+        latent = self.latent_space_projection(latent)
         reconstruction = self.decoder(latent)
         zero_loss = torch.zeros((), device=inputs.device, dtype=latent.dtype)
         zero_perplexity = torch.zeros((), device=inputs.device, dtype=latent.dtype)
@@ -351,3 +297,5 @@ class VQConvVAE(nn.Module):
 
 
 Model = VQVAEModel
+ProjectionHead = LatentSpaceProjection
+CBAM = SPAM

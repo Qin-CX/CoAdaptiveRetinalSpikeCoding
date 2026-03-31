@@ -10,7 +10,11 @@ Dataset loading and split management.
 
 `coadaptive_vqvae/models`
 
-VQ-VAE modules and the co-adaptive encoder with frequency-feature fusion.
+VQ-VAE modules, paper-aligned components, and the co-adaptive encoder.
+
+`coadaptive_vqvae/models/paper_modules.py`
+
+Paper-aligned building blocks including Spike Pattern Attention Module, Latent Space Projection, Topological Feature Extractor, Spectral Feature Extractor, and Spike Fusion Unit.
 
 `coadaptive_vqvae/utils`
 
